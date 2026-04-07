@@ -85,9 +85,3 @@ cargo build
 ## Documentation
 
 Mathematical theory and proofs are in [docs/theory.pdf](docs/theory.pdf).
-
-Rebuild from LaTeX source:
-
-```bash
-cd docs && pdflatex theory.tex
-```
