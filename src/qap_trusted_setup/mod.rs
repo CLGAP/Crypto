@@ -32,19 +32,22 @@ pub fn inner_product<G: CurveGroup>(poly_coeffs: &[G::ScalarField], srs: &[G::Af
     
     let mut ret = G::zero();
 
-    for i in 0..=(srs.len().saturating_sub(1)) {
-        ret += srs[i].into_group() * poly_coeffs[i]
+    for i in 0..srs.len() {
+        ret += srs[i].into_group() * poly_coeffs[i];
     }
 
     ret.into()
 }
 
+#[must_use]
 pub fn pad_to_len(coeffs: &[Fr], len: usize) -> Vec<Fr> {
+    assert!(coeffs.len() <= len, "Coefficient count {} exceeds target length {}", coeffs.len(), len);
     let mut v = coeffs.to_vec();
     v.resize(len, Fr::zero());
     v
 }
 
+#[must_use]
 pub fn generate_srs_ht(tau: Fr, target_poly: &DensePolynomial<Fr>, h_degree: usize) -> Vec<G1Affine> {
     let srs = generate_srs::<G1Projective>(tau, h_degree);
     let target_poly_at_tau = evaluate_polynomial(target_poly, tau);
@@ -60,7 +63,9 @@ pub struct Proof {
     pub c1: G1Affine,  // C = (O(\tau) + H(\tau)t(\tau)) * G_1
 }
 
-//Illustrative: Prover would never usually see tau
+//Illustrative: Prover would never usually see tau. Real setups sample tau,
+//publish the SRS, and destroy the scalar.
+#[must_use]
 pub fn prove(
     l_matrix: &[Vec<Fr>],
     r_matrix: &[Vec<Fr>],
@@ -103,6 +108,11 @@ pub fn prove(
     Some( Proof {a1, b2, c1})
 }
 
+// Soundness caveat: this checks only e(A,B) = e(C,G2). For any x, y the
+// triple (xG1, yG2, xyG1) passes with no circuit knowledge; groth16/ closes
+// exactly this gap. See theory.pdf, Section 7.3 (Pinocchio-style scheme) and
+// the attack scenarios in Section 8.1.
+#[must_use]
 pub fn verify(proof: &Proof) -> bool {
     if proof.a1.is_zero() || proof.b2.is_zero() || proof.c1.is_zero() {
         return false;
@@ -239,6 +249,20 @@ mod tests {
         let o_matrix = vec![vec![Fr::zero(), Fr::one(), Fr::zero(), Fr::zero()]];
         let witness = vec![Fr::one(), z_wrong, x, y];
         let tau = Fr::from(4u64);
-        let _ = prove(&l_matrix, &r_matrix, &o_matrix, &witness, tau);
+        assert!(prove(&l_matrix, &r_matrix, &o_matrix, &witness, tau).is_none(), "invalid witness must not produce a proof");
+    }
+
+    #[test]
+    fn test_verify_accepts_forgery() {
+        // documents the soundness caveat on verify: for any x, y the triple
+        // (xG1, yG2, xyG1) passes with no circuit knowledge
+        let x = Fr::from(6u64);
+        let y = Fr::from(7u64);
+        let forged = Proof {
+            a1: G1Affine::from(G1Projective::generator() * x),
+            b2: G2Affine::from(G2Projective::generator() * y),
+            c1: G1Affine::from(G1Projective::generator() * (x * y)),
+        };
+        assert!(verify(&forged), "verify has no circuit binding; forgery passes by design");
     }
 }

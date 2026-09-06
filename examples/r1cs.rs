@@ -7,7 +7,7 @@ fn main() {
     let x = Fr::from(5u64);
     let y = Fr::from(7u64);
     let z = x * y;
-    println!("  z = x * y  (x={}, y={}, z={})", x, y, z);
+    println!("  z = x * y  (x={x}, y={y}, z={z})");
 
     let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()]];
     let r = vec![vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]];
@@ -21,7 +21,7 @@ fn main() {
     let pairing_result = verify_r1cs(&l, &r, &o, &w_g1, &w_g2);
     println!("  Pairing-based: {}", if pairing_result { "verified" } else { "failed" });
 
-    let (w_g1_bad, w_g2_bad) = create_witness_points(&vec![Fr::one(), Fr::from(100u64), x, y]);
+    let (w_g1_bad, w_g2_bad) = create_witness_points(&[Fr::one(), Fr::from(100u64), x, y]);
     let bad_result = verify_r1cs(&l, &r, &o, &w_g1_bad, &w_g2_bad);
-    println!("  Wrong witness (expect reject): {}", if !bad_result { "correctly rejected" } else { "incorrectly accepted" });
+    println!("  Wrong witness (expect reject): {}", if bad_result { "incorrectly accepted" } else { "correctly rejected" });
 }

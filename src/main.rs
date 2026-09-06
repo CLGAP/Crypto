@@ -6,4 +6,6 @@ fn main() {
     println!();
     println!("Run tests:");
     println!("  cargo test");
+    println!("Run proptest sample:");
+    println!("  cargo test demo_proptest -- --ignored --nocapture");
 }

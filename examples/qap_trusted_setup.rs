@@ -8,7 +8,7 @@ fn main() {
     let x = Fr::from(5u64);
     let y = Fr::from(7u64);
     let z = x * y;
-    println!("  z = x * y  (x={}, y={}, z={})", x, y, z);
+    println!("  z = x * y  (x={x}, y={y}, z={z})");
 
     let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()]];
     let r = vec![vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]];
