@@ -11,6 +11,12 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 use ark_std::{rand::Rng, Zero};
 
+/// Naive Lagrange interpolation: O(m^2) per basis polynomial. Production
+/// provers instead use an IFFT over a roots-of-unity evaluation domain
+/// (O(m log m)): see arkworks' Groth16, `src/r1cs_to_qap.rs` (~L207-208,
+/// `domain.ifft_in_place(&mut a)`),
+/// <https://github.com/arkworks-rs/groth16/blob/master/src/r1cs_to_qap.rs>.
+/// We keep the direct construction as it mirrors the theory document.
 pub fn lagrange_interpolate<F: PrimeField + Field>(
     evaluation_points: &[F],
     values: &[F],
@@ -38,10 +44,10 @@ fn lagrange_basis_polynomial<F: PrimeField>(
     for j in 0..evaluation_points.len() {
         if j != i {
             let x_j = evaluation_points[j];
-            assert_ne!(x_i, x_j, "Duplicate evaluation points at indices {} and {}: value = {}", i, j, x_i);
+            assert_ne!(x_i, x_j, "Duplicate evaluation points at indices {i} and {j}: value = {x_i}");
             let linear_factor = DensePolynomial::from_coefficients_vec(vec![-x_j, F::one()]);
             numerator = &numerator * &linear_factor;
-            denominator = denominator * (x_i - x_j);
+            denominator *= x_i - x_j;
         }
     }
     let denom_inv = denominator.inverse().expect("Denominator must be non-zero");
@@ -56,6 +62,9 @@ pub fn evaluate_polynomial<F: Field>(
     poly.evaluate(&point)
 } 
 
+// Demonstration, not a protocol: this function holds both vectors and samples
+// the random point itself. In a real protocol the verifier samples u after the
+// prover commits; a prover-chosen point is unsound.
 pub fn verify_vector_equality<F: PrimeField, R: Rng>(
     v1: &[F],
     v2: &[F],
@@ -178,16 +187,24 @@ pub fn verify_qap_satisfaction<F: PrimeField, R: Rng>(
     let r_poly = combine_polynomials_with_witness(r_polys, witness);
     let o_poly = combine_polynomials_with_witness(o_polys, witness);
 
-    let h_poly = match compute_quotient_polynomial(&l_poly, &r_poly, &o_poly, target_poly) {
-        Some(h) => h,
-        None => return false,
+    let Some(h_poly) = compute_quotient_polynomial(&l_poly, &r_poly, &o_poly, target_poly) else {
+        return false;
     };
 
     let r = F::rand(rng);
 
+    // redundant after exact division above (which already proved the identity
+    // coefficient-by-coefficient); kept to demonstrate the SNARK-style
+    // random-point check used when H comes from an untrusted prover
     l_poly.evaluate(&r) * r_poly.evaluate(&r) - o_poly.evaluate(&r) == h_poly.evaluate(&r) * target_poly.evaluate(&r)
 }
 
+/// Exact long division: O(m^2). Production provers divide by the vanishing
+/// polynomial of a roots-of-unity domain in evaluation form over a coset
+/// (O(m log m)): see arkworks' Groth16, `src/r1cs_to_qap.rs` (~L229-238,
+/// `evaluate_vanishing_polynomial` + `coset_domain.ifft_in_place`),
+/// <https://github.com/arkworks-rs/groth16/blob/master/src/r1cs_to_qap.rs>.
+#[must_use]
 pub fn compute_quotient_polynomial<F: PrimeField>(
     l_poly: &DensePolynomial<F>,
     r_poly: &DensePolynomial<F>,
@@ -200,7 +217,7 @@ pub fn compute_quotient_polynomial<F: PrimeField>(
     let denom_coeffs = target_poly.coeffs();
 
     // Zero polynomial is divisible by any non-zero polynomial; quotient is zero
-    if num_coeffs.is_empty() || num_coeffs.iter().all(|c| c.is_zero()) {
+    if num_coeffs.is_empty() || num_coeffs.iter().all(ark_std::Zero::is_zero) {
         return Some(DensePolynomial::zero());
     }
 
@@ -215,9 +232,7 @@ pub fn compute_quotient_polynomial<F: PrimeField>(
 
     for i in (0..=num_coeffs.len().saturating_sub(denom_coeffs.len())).rev() {
         let leading_pos = i + denom_coeffs.len() - 1;
-        if leading_pos >= remainder.len() {
-            continue;
-        }
+        debug_assert!(leading_pos < remainder.len());
         //skip if no div needed
         if remainder[leading_pos].is_zero() {
             continue;
@@ -227,9 +242,8 @@ pub fn compute_quotient_polynomial<F: PrimeField>(
         quotient_coeffs[i] = factor;
 
         for j in 0..denom_coeffs.len() {
-            if i + j < remainder.len() {
-                remainder[i + j] = remainder[i + j] - factor * denom_coeffs[j];
-            }
+            debug_assert!(i + j < remainder.len());
+            remainder[i + j] -= factor * denom_coeffs[j];
         }
     }
 
@@ -260,6 +274,16 @@ mod tests {
     use ark_std::{One, rand::{rngs::StdRng, SeedableRng}};
 
     #[test]
+    fn test_compute_quotient_polynomial_non_divisible_returns_none() {
+        // t(x) = x - 1; numerator L*R - O = x has a nonzero remainder at x = 1
+        let l = DensePolynomial::from_coefficients_vec(vec![Fr::zero(), Fr::one()]);
+        let r = DensePolynomial::from_coefficients_vec(vec![Fr::one()]);
+        let o = DensePolynomial::zero();
+        let t = DensePolynomial::from_coefficients_vec(vec![-Fr::one(), Fr::one()]);
+        assert!(compute_quotient_polynomial(&l, &r, &o, &t).is_none());
+    }
+
+    #[test]
     fn test_lagrange_interpolate() {
         let points = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
         let values = vec![Fr::from(2u64), Fr::from(4u64), Fr::from(6u64)];
@@ -268,7 +292,7 @@ mod tests {
 
         for i in 0..points.len() {
             let result = evaluate_polynomial(&poly, points[i]);
-            assert_eq!(result, values[i], "Polynomial should evaluate to {} at point {}", values[i], points[i])
+            assert_eq!(result, values[i], "Polynomial should evaluate to {} at point {}", values[i], points[i]);
         }
     }
 

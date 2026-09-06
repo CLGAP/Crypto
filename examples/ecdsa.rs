@@ -7,7 +7,7 @@ fn main() {
     let h = hash_message(message);
 
     println!("  Signing: \"{}\"", String::from_utf8_lossy(message));
-    let signature = sign(&key_pair.private_key, &h, true);
+    let signature = sign(&key_pair.private_key, &h);
     println!("  r = {:?}", signature.r);
     println!("  s = {:?}", signature.s);
 

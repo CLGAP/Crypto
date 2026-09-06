@@ -1,8 +1,9 @@
 //! Simplified Groth16 (Pinocchio-style) with alpha/beta shifting.
 //!
-//! Adds alpha, beta blinding to the CRS to prevent proof element forgery,
-//! but without public/private input separation (gamma, delta) or
-//! zero-knowledge blinding (r, s).
+//! Adds alpha, beta blinding to the CRS to block raw arbitrary-(A,B)
+//! forgery. Still weaker than it looks: no public-input binding (the proof
+//! shows "some witness exists", unbound to a statement) and no
+//! zero-knowledge (A, B, C are deterministic in the witness).
 //!
 //! See: Theory document, Section 8.1, 8.2.
 
@@ -52,6 +53,7 @@ fn compute_psi(
     psi
 }
 
+#[must_use]
 pub fn trusted_setup(
     l_matrix: &[Vec<Fr>],
     r_matrix: &[Vec<Fr>],
@@ -69,12 +71,13 @@ pub fn trusted_setup(
     let eta = generate_srs_ht(tau, &target_poly, deg.saturating_sub(2));
     let alpha_g1 = G1Affine::from(G1Projective::generator() * alpha); 
     let beta_g2 = G2Affine::from(G2Projective::generator() * beta);
-    let (l_polys, r_polys, o_polys) = construct_qap(&l_matrix, &r_matrix, &o_matrix, &eval_points);
+    let (l_polys, r_polys, o_polys) = construct_qap(l_matrix, r_matrix, o_matrix, &eval_points);
     let psi = compute_psi(&l_polys, &r_polys, &o_polys, tau, alpha, beta);
 
     CRS { srs_g1, srs_g2, eta, alpha_g1, beta_g2, psi }
 }
 
+#[must_use]
 pub fn prove(
     l_matrix: &[Vec<Fr>],
     r_matrix: &[Vec<Fr>],
@@ -84,7 +87,7 @@ pub fn prove(
 ) -> Option<Proof> {
     let eval_points: Vec<Fr> = (1..=l_matrix.len()).map(|i| Fr::from(i as u64)).collect();
     let t_poly = target_polynomial(&eval_points);
-    let (l_polys, r_polys, o_polys) = construct_qap(&l_matrix, &r_matrix, &o_matrix, &eval_points);
+    let (l_polys, r_polys, o_polys) = construct_qap(l_matrix, r_matrix, o_matrix, &eval_points);
     let l_poly = combine_polynomials_with_witness(&l_polys, witness);
     let r_poly = combine_polynomials_with_witness(&r_polys, witness);
     let o_poly = combine_polynomials_with_witness(&o_polys, witness);
@@ -106,6 +109,7 @@ pub fn prove(
     Some(Proof { a1, b2, c1 })
 }
 
+#[must_use]
 pub fn verify(proof: &Proof, crs: &CRS) -> bool {
     let target_identity = PairingOutput::<Bn254>::zero();
     let ab = Bn254::pairing(-proof.a1, proof.b2);
@@ -163,7 +167,7 @@ mod tests {
         let witness = vec![Fr::one(), Fr::from(35u64), Fr::from(5u64), Fr::from(7u64)];
         let crs = trusted_setup(&l, &r, &o, Fr::from(11u64), Fr::from(13u64), Fr::from(4u64));
         let proof = prove(&l, &r, &o, &witness, &crs).unwrap();
-        assert!(verify(&proof, &crs))
+        assert!(verify(&proof, &crs));
     }
 
     #[test]
@@ -178,7 +182,7 @@ mod tests {
             b2: G2Affine::from(G2Projective::generator() * Fr::from(2u64)),
             c1: G1Affine::from(G1Projective::generator() * Fr::from(2u64))
         };
-        assert!(!verify(&forged_proof, &crs))
+        assert!(!verify(&forged_proof, &crs));
     }
 
     #[test]

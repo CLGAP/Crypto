@@ -11,7 +11,7 @@ use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, Group};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
-use ark_std::{rand::{rngs::StdRng, SeedableRng}, Zero, UniformRand};
+use ark_std::{rand::{rngs::StdRng, SeedableRng}, One, Zero, UniformRand};
 use ark_ff::Field;
 use getrandom::getrandom;
 
@@ -64,17 +64,21 @@ fn compute_psi(
 }
 
 impl CRS {
+    // Illustrative: the caller supplies and retains all five toxic scalars.
+    // Real setups sample them, publish the CRS, and destroy the scalars.
+    #[must_use]
     pub fn generate(
         l_matrix: &[Vec<Fr>],
         r_matrix: &[Vec<Fr>],
         o_matrix: &[Vec<Fr>],
         alpha: Fr, beta: Fr, tau: Fr,
         gamma: Fr, delta: Fr, ell: usize,
-    ) -> CRS {
+    ) -> Self {
         assert!(
             gamma != delta,
             "gamma and delta must be distinct for public/private input separation"
         );
+        assert!(!gamma.is_zero() && !delta.is_zero(), "gamma and delta must be nonzero (both are inverted)");
         let deg = l_matrix.len();
     
         let srs_g1 = generate_srs::<G1Projective>(tau, deg.saturating_sub(1));
@@ -91,15 +95,16 @@ impl CRS {
         let gamma_g2 = G2Affine::from(G2Projective::generator() * gamma);
         let delta_g1 = G1Affine::from(G1Projective::generator() * delta);
         let delta_g2 = G2Affine::from(G2Projective::generator() * delta);
-        let (l_polys, r_polys, o_polys) = construct_qap(&l_matrix, &r_matrix, &o_matrix, &eval_points);
+        let (l_polys, r_polys, o_polys) = construct_qap(l_matrix, r_matrix, o_matrix, &eval_points);
         let psi = compute_psi(&l_polys, &r_polys, &o_polys, tau, alpha, beta, gamma, delta, ell);
     
-        CRS { srs_g1, srs_g2, eta, alpha_g1, beta_g1, beta_g2, psi, gamma_g2, delta_g1, delta_g2, ell }
+        Self { srs_g1, srs_g2, eta, alpha_g1, beta_g1, beta_g2, psi, gamma_g2, delta_g1, delta_g2, ell }
     }
 
 }
 
 impl Proof {
+    #[must_use]
     pub fn new(
         l_matrix: &[Vec<Fr>],
         r_matrix: &[Vec<Fr>],
@@ -107,9 +112,10 @@ impl Proof {
         witness: &[Fr],
         crs: &CRS,
     ) -> Option<Self> {
+        assert_eq!(witness.len(), crs.psi.len(), "witness length must match CRS psi terms");
         let eval_points: Vec<Fr> = (1..=l_matrix.len()).map(|i| Fr::from(i as u64)).collect();
         let t_poly = target_polynomial(&eval_points);
-        let (l_polys, r_polys, o_polys) = construct_qap(&l_matrix, &r_matrix, &o_matrix, &eval_points);
+        let (l_polys, r_polys, o_polys) = construct_qap(l_matrix, r_matrix, o_matrix, &eval_points);
         let l_poly = combine_polynomials_with_witness(&l_polys, witness);
         let r_poly = combine_polynomials_with_witness(&r_polys, witness);
         let o_poly = combine_polynomials_with_witness(&o_polys, witness);
@@ -135,10 +141,15 @@ impl Proof {
             + inner_product::<G1Projective>(&h_coeffs, &crs.eta) 
             + a1.into_group() * s + b1 * r - crs.delta_g1.into_group() * (r * s));
     
-        Some(Proof { a1, b2, c1 })
+        Some(Self { a1, b2, c1 })
     }
 
+    // verifier could be passed a smaller subset of CRS
+    #[must_use]
     pub fn verify(&self, crs: &CRS, public_inputs: &[Fr]) -> bool {
+        if public_inputs.len() != crs.ell || public_inputs.first() != Some(&Fr::one()) {
+            return false;
+        }
         let lhs = Bn254::pairing(self.a1, self.b2);
         let alphabeta = Bn254::pairing(crs.alpha_g1, crs.beta_g2);
         let mut x = G1Projective::zero();
@@ -257,6 +268,24 @@ mod tests {
         let proof = Proof::new(&l, &r, &o, &witness, &crs).unwrap();
         // Correct public inputs: [1, 35]. Wrong: [1, 36].
         assert!(!Proof::verify(&proof, &crs, &[Fr::one(), Fr::from(36u64)]));
+    }
+
+    #[test]
+    fn test_verify_rejects_wrong_length_public_inputs() {
+        let (l, r, o, crs) = setup_z_equals_xy();
+        let witness = vec![Fr::one(), Fr::from(35u64), Fr::from(5u64), Fr::from(7u64)];
+        let proof = Proof::new(&l, &r, &o, &witness, &crs).unwrap();
+        // ell = 2: shorter must not panic, longer must not be silently accepted
+        assert!(!Proof::verify(&proof, &crs, &[Fr::one()]));
+        assert!(!Proof::verify(&proof, &crs, &[Fr::one(), Fr::from(35u64), Fr::from(35u64)]));
+    }
+
+    #[test]
+    fn test_verify_rejects_nonunit_constant_wire() {
+        let (l, r, o, crs) = setup_z_equals_xy();
+        let witness = vec![Fr::one(), Fr::from(35u64), Fr::from(5u64), Fr::from(7u64)];
+        let proof = Proof::new(&l, &r, &o, &witness, &crs).unwrap();
+        assert!(!Proof::verify(&proof, &crs, &[Fr::from(2u64), Fr::from(35u64)]));
     }
 
     #[test]

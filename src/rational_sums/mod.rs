@@ -2,7 +2,8 @@
 //!
 //! Verifies that a/b + c/d = e/f by mapping each rational
 //! to a curve point via scalar multiplication and checking
-//! point addition equality.
+//! point addition equality. Note "=" means equality in Fr:
+//! e' = e + r*f passes despite being a different rational number.
 //!
 //! See: Theory document, Section 4 (Homomorphic Hiding)
 
@@ -21,17 +22,9 @@ fn quotient_point(num: BigUint, den: BigUint) -> Result<Projective, String> {
         return Err("Denominator has no multiplicative inverse modulo curve: denominator is zero.".to_string());
     }
     
-    // Fermat's Little Theorem: x^ -1 % C == x^ (C-2) % C
-    let den_inverse = den_fr.inverse();
-    if den_inverse.is_none() {
-        return Err("Denominator has no multiplicative inverse modulo curve: gcd(den, curve_order) != 1.".to_string());
-    }
-
-    let s = num_fr * den_inverse.unwrap();
-
-    if s.is_zero() {
-        return Err("Point at infinity is not a practical identity to verify rational sum".to_string());
-    }
+    // multiplicative inverse in Fr (cf. theory doc: a^(n-2) = a^-1 by Fermat;
+    // arkworks computes it via extended Euclid instead)
+    let s = num_fr * den_fr.inverse().expect("nonzero element of a prime field is invertible");
 
     let g = Projective::generator();
     let point = g*s;
@@ -71,6 +64,34 @@ mod tests {
         );
         assert_eq!(result, Ok(true));
     }
+    #[test]
+    fn test_verify_rational_sum_wrong_sum() {
+        // 2/3 + 5/7 != 30/21
+        let result = verify_rational_sum(
+            BigUint::from(2u64),
+            BigUint::from(3u64),
+            BigUint::from(5u64),
+            BigUint::from(7u64),
+            BigUint::from(30u64),
+            BigUint::from(21u64),
+        );
+        assert_eq!(result, Ok(false));
+    }
+
+    #[test]
+    fn test_verify_rational_sum_zero_numerator() {
+        // 0/3 + 5/7 = 5/7; the identity point is a legitimate summand
+        let result = verify_rational_sum(
+            BigUint::from(0u64),
+            BigUint::from(3u64),
+            BigUint::from(5u64),
+            BigUint::from(7u64),
+            BigUint::from(5u64),
+            BigUint::from(7u64),
+        );
+        assert_eq!(result, Ok(true));
+    }
+
     #[test]
     fn test_quotient_point_zero_denominator() {
         let result = quotient_point(BigUint::from(1u64), BigUint::from(0u64));

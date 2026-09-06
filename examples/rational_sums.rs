@@ -11,6 +11,6 @@ fn main() {
     match result {
         Ok(true) => println!("  2/3 + 5/7 = 29/21: verified"),
         Ok(false) => println!("  2/3 + 5/7 = 29/21: failed"),
-        Err(e) => println!("  Error: {}", e),
+        Err(e) => println!("  Error: {e}"),
     }
 }

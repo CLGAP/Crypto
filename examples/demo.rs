@@ -45,7 +45,7 @@ fn run_rational_sums() {
     match result {
         Ok(true) => println!("  2/3 + 5/7 = 29/21: verified"),
         Ok(false) => println!("  2/3 + 5/7 = 29/21: failed"),
-        Err(e) => println!("  Error: {}", e),
+        Err(e) => println!("  Error: {e}"),
     }
 }
 
@@ -63,7 +63,7 @@ fn run_ecdsa() {
     let h = hash_message(message);
 
     println!("  Signing: \"{}\"", String::from_utf8_lossy(message));
-    let signature = sign(&key_pair.private_key, &h, true);
+    let signature = sign(&key_pair.private_key, &h);
     println!("  r = {:?}", signature.r);
     println!("  s = {:?}", signature.s);
 
@@ -87,26 +87,26 @@ fn run_bilinear_pairings() {
 
     let wrong = (g1 * Fr::from(1u64)).into();
     let result_wrong = verify_pairing(wrong, (g2 * Fr::from(1u64)).into(), wrong, &BigUint::from(1u64), &BigUint::from(1u64), &BigUint::from(1u64));
-    println!("  Wrong values (expect reject): {}", if !result_wrong { "correctly rejected" } else { "incorrectly accepted" });
+    println!("  Wrong values (expect reject): {}", if result_wrong { "incorrectly accepted" } else { "correctly rejected" });
 }
 
 fn run_r1cs() {
     let x = Fr::from(5u64);
     let y = Fr::from(7u64);
     let z = x * y;
-    println!("  z = x * y  (x={}, y={}, z={})", x, y, z);
+    println!("  z = x * y  (x={x}, y={y}, z={z})");
 
     let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()]];
     let r = vec![vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]];
     let o = vec![vec![Fr::zero(), Fr::one(), Fr::zero(), Fr::zero()]];
 
-    let (w_g1, w_g2) = create_witness_points(&vec![Fr::one(), z, x, y]);
+    let (w_g1, w_g2) = create_witness_points(&[Fr::one(), z, x, y]);
     let result = verify_r1cs(&l, &r, &o, &w_g1, &w_g2);
     println!("  Valid witness: {}", if result { "verified" } else { "failed" });
 
-    let (w_g1_bad, w_g2_bad) = create_witness_points(&vec![Fr::one(), Fr::from(100u64), x, y]);
+    let (w_g1_bad, w_g2_bad) = create_witness_points(&[Fr::one(), Fr::from(100u64), x, y]);
     let result_bad = verify_r1cs(&l, &r, &o, &w_g1_bad, &w_g2_bad);
-    println!("  Wrong witness (expect reject): {}", if !result_bad { "correctly rejected" } else { "incorrectly accepted" });
+    println!("  Wrong witness (expect reject): {}", if result_bad { "incorrectly accepted" } else { "correctly rejected" });
 }
 
 fn run_groth16() {

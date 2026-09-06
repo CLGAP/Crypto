@@ -17,5 +17,5 @@ fn main() {
 
     let wrong = (g1 * Fr::from(1u64)).into();
     let result_wrong = verify_pairing(wrong, (g2 * Fr::from(1u64)).into(), wrong, &BigUint::from(1u64), &BigUint::from(1u64), &BigUint::from(1u64));
-    println!("  Wrong values (expect reject): {}", if !result_wrong { "correctly rejected" } else { "incorrectly accepted" });
+    println!("  Wrong values (expect reject): {}", if result_wrong { "incorrectly accepted" } else { "correctly rejected" });
 }

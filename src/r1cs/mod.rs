@@ -11,7 +11,6 @@ use ark_ff::{Field, PrimeField};
 use ark_ec::{AffineRepr, CurveGroup, Group};
 use ark_ec::pairing::Pairing;
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective, G1Affine, G2Affine};
-use ark_std::Zero;
 
 
 pub fn verify_r1cs_with_hadamard_product<F: PrimeField>(
@@ -23,10 +22,12 @@ pub fn verify_r1cs_with_hadamard_product<F: PrimeField>(
     let num_rows = l.len();
     assert_eq!(num_rows, r.len(), "L and R must have the same number of rows");
     assert_eq!(num_rows, o.len(), "L and O must have the same number of rows");
+    validate_dimensions(l, r, o, witness.len());
 
-    if !rank_column_check(l, r, o) {
-        false;
-    }    
+    // constant wire: the first witness element must be 1
+    if witness.first() != Some(&F::one()) {
+        return false;
+    }
 
     let lw = matrix_vector_multiply(l, witness);
     let rw = matrix_vector_multiply(r, witness);
@@ -61,7 +62,7 @@ fn matrix_vector_multiply<F: Field>(
         
         let mut sum = F::zero();
         for j in 0..num_cols {
-            sum = sum + (matrix[i][j]*vector[j]);
+            sum += matrix[i][j]*vector[j];
         }
         result.push(sum);
     }
@@ -82,6 +83,10 @@ fn hadamard_product<F: Field>(
     result
 }
 
+// Soundness caveat: nothing checks witness_g1 and witness_g2 encode the same
+// scalars (no e(w1_i, G2) = e(G1, w2_i) check); mismatched vectors can satisfy
+// rows without any valid scalar witness.
+#[must_use]
 pub fn verify_r1cs(
     l: &[Vec<Fr>],
     r: &[Vec<Fr>],
@@ -92,9 +97,14 @@ pub fn verify_r1cs(
     let num_rows = l.len();
     assert_eq!(num_rows, r.len(), "L and R must have the same number of rows");
     assert_eq!(num_rows, o.len(), "L and O must have the same number of rows");
+    assert_eq!(witness_g1.len(), witness_g2.len(), "G1 and G2 witness vectors must have the same length");
+    validate_dimensions(l, r, o, witness_g1.len());
 
-    if !rank_column_check(l, r, o) {
-        false;
+    // constant wire: the first witness point must be the generator (scalar 1)
+    if witness_g1.first() != Some(&G1Affine::generator())
+        || witness_g2.first() != Some(&G2Affine::generator())
+    {
+        return false;
     }
 
     let l_s1 = matrix_point_multiply::<G1Projective>(l, witness_g1);
@@ -135,15 +145,16 @@ where
     for i in 0..num_rows {
         assert_eq!(matrix[i].len(), num_cols, "All matrix rows must have the same number of columns. Row 0 has {} columns, but row {} has {} columns", num_cols, i, matrix[i].len());
 
-        let mut sum = points[0].into_group() * Fr::zero();
+        let mut sum = C::zero();
         for j in 0..num_cols {
-            sum = sum + (points[j].into_group() * matrix[i][j]);
+            sum += points[j].into_group() * matrix[i][j];
         }
         result.push(sum.into());
     }
     result
 }
 
+#[must_use]
 pub fn create_witness_points(scalars: &[Fr]) -> (Vec<G1Affine>, Vec<G2Affine>) {
     let g1_gen = G1Projective::generator();
     let g2_gen = G2Projective::generator();
@@ -153,36 +164,48 @@ pub fn create_witness_points(scalars: &[Fr]) -> (Vec<G1Affine>, Vec<G2Affine>) {
     (g1, g2)
 }
 
-pub fn rank_column_check<F: Field>(
+fn validate_dimensions<F: Field>(
     l: &[Vec<F>],
     r: &[Vec<F>],
     o: &[Vec<F>],
-) -> bool {
-    let num_rows = l.len();
-    for i in 0..num_rows {
-        let num_cols = l[i].len();
-        assert_eq!(num_cols, r[i].len(), "Row{}: L and R must have the same number of columns", i);
-        assert_eq!(num_cols, o[i].len(), "Row{}: L and O must have the same number of columns", i);
-
-        for j in 0..num_cols {
-            let l_nonzero = !l[i][j].is_zero();
-            let r_nonzero = !r[i][j].is_zero();
-            let o_nonzero = !o[i][j].is_zero();
-
-            let count = (l_nonzero as u32) + (r_nonzero as u32) + (o_nonzero as u32);
-            // check if constraints have one multiplication operation, needed to encode via bilinear pairings
-            if count >= 2 {
-                return false;
-            }
-        }
+    witness_len: usize,
+) {
+    for i in 0..l.len() {
+        assert_eq!(l[i].len(), witness_len, "Row {i}: L columns must match witness length");
+        assert_eq!(r[i].len(), witness_len, "Row {i}: R columns must match witness length");
+        assert_eq!(o[i].len(), witness_len, "Row {i}: O columns must match witness length");
     }
-    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::One;
+    use ark_std::{One, Zero};
+
+    #[test]
+    fn test_verify_r1cs_squaring_constraint() {
+        // v = x * x: L and R select the same witness column
+        let x = Fr::from(5u64);
+        let v = x * x;
+        let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one()]];
+        let r = vec![vec![Fr::zero(), Fr::zero(), Fr::one()]];
+        let o = vec![vec![Fr::zero(), Fr::one(), Fr::zero()]];
+        let witness = vec![Fr::one(), v, x];
+        assert!(verify_r1cs_with_hadamard_product(&l, &r, &o, &witness));
+    }
+
+    #[test]
+    fn test_verify_r1cs_rejects_nonunit_constant_wire() {
+        let x = Fr::from(5u64);
+        let y = Fr::from(7u64);
+        let z = x * y;
+        let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()]];
+        let r = vec![vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]];
+        let o = vec![vec![Fr::zero(), Fr::one(), Fr::zero(), Fr::zero()]];
+        // constraint itself holds, but witness[0] != 1
+        let witness = vec![Fr::from(2u64), z, x, y];
+        assert!(!verify_r1cs_with_hadamard_product(&l, &r, &o, &witness));
+    }
 
     #[test]
     fn test_verify_r1cs_field_based() {
@@ -279,14 +302,14 @@ mod tests {
         let x = Fr::from(5u64);
         let y = Fr::from(7u64);
         let z_wrong = Fr::from(100u64);
-        let (witness_g1, witness_g2) = create_witness_points(&vec![Fr::one(), z_wrong, x, y]);
+        let (witness_g1, witness_g2) = create_witness_points(&[Fr::one(), z_wrong, x, y]);
         let l = vec![vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()]];
         let r = vec![vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one()]];
         let o = vec![vec![Fr::zero(), Fr::one(), Fr::zero(), Fr::zero()]];
         assert!(!verify_r1cs(&l, &r, &o, &witness_g1, &witness_g2));
 
         // Invalid structure
-        let (witness_g1, witness_g2) = create_witness_points(&vec![Fr::one(), Fr::one()]);
+        let (witness_g1, witness_g2) = create_witness_points(&[Fr::one(), Fr::one()]);
         let l = vec![vec![Fr::one(), Fr::one()]];
         let r = vec![vec![Fr::one(), Fr::zero()]];
         let o = vec![vec![Fr::zero(), Fr::zero()]];
