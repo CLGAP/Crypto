@@ -4,7 +4,7 @@ Rust implementations of cryptographic primitives building toward a full Groth16 
 
 ## Resources
 
-RareSkills, J. Scholz, Abstract Algebra (Dummit and Foote), and Wikipedia.
+RareSkills(J. Scholz), Abstract Algebra (D. Dummit and R. Foote), and Wikipedia.
 
 For detailed mathematical theory and proofs, see [docs/theory.pdf](docs/theory.pdf).
 
@@ -43,12 +43,6 @@ cargo run --example r1cs_to_qap
 cargo run --example qap_trusted_setup
 cargo run --example groth16_alpha_beta
 cargo run --example groth16_complete
-```
-
-List available examples:
-
-```bash
-cargo run --example
 ```
 
 ## Tests
